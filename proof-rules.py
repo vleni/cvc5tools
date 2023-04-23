@@ -178,34 +178,63 @@ def make_regression_worker(args):
     import os
     os.nice(10)
 
-    command_stem, pathIn, pathOut = args
-    command = command_stem + [Path(pathIn)]
+    pathIn, pathAux, pathOut = args
     pathOut.parent.mkdir(exist_ok=True, parents=True)
-    trace = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           preexec_fn=lambda: os.nice(10))
 
-    if trace.returncode == 0:
-        with open(str(pathOut) + '.out', "w") as f:
-            for line in trace.stdout.decode('utf-8').split('\r\n'):
-                f.write(line)
-    else:
-        with open(str(pathOut) + '.err', "w") as f:
-            for line in trace.stderr.decode('utf-8').split('\r\n'):
-                f.write(line)
-            f.write(str(trace.returncode))
+    with open(pathIn, 'r') as fi:
+        with open(pathOut, 'w') as fo:
+            for line in fi.readlines():
+                if line.startswith('(assert'):
+                    continue
+                fo.write(line)
+    with open(pathAux, 'r') as fi:
+        with open(str(pathOut) + '.out', 'w') as fo:
+            for line in fi.readlines():
+                if ':rule all_simplify' not in line:
+                    continue
+                fo.write(line)
 
 
 def routine_make_regression(args):
     """
-    inputs: ../*.smt2
-    outputs: ../*.smt2.out or .err depending on the output
+    -i: ../*.smt2
+    -a: [same structure as -i but with .out files]
+    outputs: {.smt2, .smt2.out} pairs
     """
     # Create the output directory
+    args.auxiliary = Path(args.auxiliary)
     args.output = Path(args.output)
     args.output.mkdir(exist_ok=True, parents=True)
 
-    print("Unfinished")
-    return
+    # raw smt2 files
+    globInput = [str(path.relative_to(args.f))
+                 for path in args.f.glob("**/*.smt2")]
+    # raw output files
+    globAuxiliary = [path.relative_to(args.auxiliary)
+                     for path in args.auxiliary.glob("**/*.out")]
+
+    fileList = [path.with_suffix("") for path in globAuxiliary]
+
+    import tqdm
+    import multiprocessing
+
+    threads = multiprocessing.cpu_count() if args.threads == 0 else args.threads
+
+    print(f"Executing with {threads} threads")
+    results = None
+    feedstock = [
+        (args.f / path, str(args.auxiliary / path) + '.out', args.output / path)
+        for path in fileList
+    ]
+    if threads > 1:
+        with multiprocessing.Pool(threads) as pool:
+            iterant = pool.imap_unordered(make_regression_worker, feedstock)
+            results = list(tqdm.tqdm(iterant, total=len(fileList)))
+    else:
+        results = [
+            make_regression_worker(a)
+            for a in tqdm.tqdm(feedstock)
+        ]
 
 class TestRules(unittest.TestCase):
 
@@ -262,7 +291,8 @@ if __name__ == '__main__':
     execHelpStr = ', '.join(EXEC_DICT.keys())
     parser.add_argument('mode', help="Mode of execution {" + execHelpStr + "}")
     parser.add_argument('-f', help='Input file')
-    parser.add_argument('-o', '--output', default="", help='Input file')
+    parser.add_argument('-a', '--auxiliary', default="", help='Auxiliary file/directory')
+    parser.add_argument('-o', '--output', default="", help='Output directory')
     parser.add_argument('--timeout', type=int, default=60000, help='Execution timeout (milliseconds)')
     parser.add_argument('--cvc5', default="build/bin/cvc5", help='cvc5 path')
     parser.add_argument('--threads', type=int, default=0, help='Number of threads')
