@@ -5,6 +5,8 @@ import re
 import unittest
 from typing import Optional
 
+import pandas
+
 # Read Rules
 
 def read_rules(lines):
@@ -37,6 +39,17 @@ def routine_read_rules(args):
     with open(args.f, "r") as f:
         lines = [line.rstrip() for line in f]
     rules = read_rules(lines)
+    rules = sorted(rules)
+    for rule in rules:
+        print(rule)
+
+
+def routine_read_sheets(args):
+    """
+    Read the BV_Rewrites spreadsheet
+    """
+    df = pandas.read_csv(args.f, keep_default_na=False)
+    rules = sorted(rule for rule in df["RARE"] if rule != "")
     for rule in rules:
         print(rule)
 
@@ -80,7 +93,7 @@ def routine_trace(args):
                  for path in args.f.glob("**/*.smt2")]
 
     fileList = [path for path in globInput if path not in set(globOutput)]
-    print(f"{len(fileList)}/{len(globInput)} input files skipped")
+    print(f"{len(globInput) - len(fileList)}/{len(globInput)} input files skipped")
 
     import tqdm
     import multiprocessing
@@ -130,7 +143,6 @@ def count_worker(args):
     import os
     os.nice(10)
 
-    KEY = ':rule all_simplify :args ('
     pathIn = args
     counts = dict()
     with open(pathIn, 'r') as f:
@@ -144,7 +156,7 @@ def count_worker(args):
 def routine_count(args):
     args.output = Path(args.output)
     args.output.mkdir(exist_ok=True, parents=True)
-    fileList = [path for path in args.f.glob("**/*")]
+    fileList = [path for path in args.f.glob("**/*.out")]
 
     import tqdm
     import multiprocessing
@@ -283,7 +295,8 @@ if __name__ == '__main__':
                     epilog='proof-new')
 
     EXEC_DICT = {
-        'rules': routine_read_rules,
+        'read-rules': routine_read_rules,
+        'read-sheets': routine_read_sheets,
         'trace': routine_trace,
         'count': routine_count,
         'make_regression': routine_make_regression, # make a regression test
