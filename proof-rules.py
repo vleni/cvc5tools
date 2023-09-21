@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python/3
 
 from pathlib import Path
 import re
@@ -36,7 +36,7 @@ def read_rules(lines):
     return rules
 
 def routine_read_rules(args):
-    with open(args.f, "r") as f:
+    with open(args.file, "r") as f:
         lines = [line.rstrip() for line in f]
     rules = read_rules(lines)
     rules = sorted(rules)
@@ -48,11 +48,33 @@ def routine_read_sheets(args):
     """
     Read the BV_Rewrites spreadsheet
     """
-    df = pandas.read_csv(args.f, keep_default_na=False)
+    df = pandas.read_csv(args.file, keep_default_na=False)
     rules = sorted(rule for rule in df["RARE"] if rule != "")
     for rule in rules:
         print(rule)
 
+
+def process_line_of_mkdslrulecounts(l) -> Optional[tuple[str, int]]:
+    if ',' not in l:
+        return None
+    l = l.rstrip().removeprefix("[92m+")
+    name, num = l.split(',')
+    return name, int(num)
+
+
+def routine_read_counts(args):
+    """
+    Read the BV_Rewrites spreadsheet
+    """
+    df_bv = pandas.read_csv(args.auxiliary, keep_default_na=False)
+    print("Columns: ", df_bv.columns)
+    with open(args.file, "r") as f:
+        counts = [x for x in [process_line_of_mkdslrulecounts(line) for line in f] if x]
+
+    counts = { name: num for name,num in counts }
+
+    df_out = df_bv["RARE"].map(lambda name: counts.get(name, "")).to_frame()
+    print(df_out.to_csv(index=False))
 
 def trace_worker(args):
     import subprocess
@@ -89,8 +111,8 @@ def routine_trace(args):
     globOutput = [str(path.relative_to(args.output).with_suffix(""))
                       for path in args.output.glob("**/*")]
     # glob the input directory to see what files need processing
-    globInput = [str(path.relative_to(args.f))
-                 for path in args.f.glob("**/*.smt2")]
+    globInput = [str(path.relative_to(args.file))
+                 for path in args.file.glob("**/*.smt2")]
 
     fileList = [path for path in globInput if path not in set(globOutput)]
     print(f"{len(globInput) - len(fileList)}/{len(globInput)} input files skipped")
@@ -116,7 +138,7 @@ def routine_trace(args):
     results = None
     if threads > 1:
         feedstock = [
-            (command_stem, args.f / path, args.output / path)
+            (command_stem, args.file / path, args.output / path)
             for path in fileList
         ]
         with multiprocessing.Pool(threads) as pool:
@@ -124,7 +146,7 @@ def routine_trace(args):
             results = list(tqdm.tqdm(iterant, total=len(fileList)))
     else:
         feedstock = [
-            (command_stem, args.f / path, args.output / path)
+            (command_stem, args.file / path, args.output / path)
             for path in fileList
         ]
         results = [
@@ -156,7 +178,7 @@ def count_worker(args):
 def routine_count(args):
     args.output = Path(args.output)
     args.output.mkdir(exist_ok=True, parents=True)
-    fileList = [path for path in args.f.glob("**/*.out")]
+    fileList = [path for path in args.file.glob("**/*.out")]
 
     import tqdm
     import multiprocessing
@@ -219,8 +241,8 @@ def routine_make_regression(args):
     args.output.mkdir(exist_ok=True, parents=True)
 
     # raw smt2 files
-    globInput = [str(path.relative_to(args.f))
-                 for path in args.f.glob("**/*.smt2")]
+    globInput = [str(path.relative_to(args.file))
+                 for path in args.file.glob("**/*.smt2")]
     # raw output files
     globAuxiliary = [path.relative_to(args.auxiliary)
                      for path in args.auxiliary.glob("**/*.out")]
@@ -235,7 +257,7 @@ def routine_make_regression(args):
     print(f"Executing with {threads} threads")
     results = None
     feedstock = [
-        (args.f / path, str(args.auxiliary / path) + '.out', args.output / path)
+        (args.file / path, str(args.auxiliary / path) + '.out', args.output / path)
         for path in fileList
     ]
     if threads > 1:
@@ -292,18 +314,21 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
                     prog='CVC5 Tester',
                     description='Executes CVC5',
-                    epilog='proof-new')
+                    epilog='proof-new',
+                    formatter_class=argparse.RawTextHelpFormatter)
 
-    EXEC_DICT = {
-        'read-rules': routine_read_rules,
-        'read-sheets': routine_read_sheets,
-        'trace': routine_trace,
-        'count': routine_count,
-        'make_regression': routine_make_regression, # make a regression test
-    }
-    execHelpStr = ', '.join(EXEC_DICT.keys())
-    parser.add_argument('mode', help="Mode of execution {" + execHelpStr + "}")
-    parser.add_argument('-f', help='Input file')
+    EXECS = [
+        ('read-rules', "Read rules from -f src/theory/bv/rewrites and print them", routine_read_rules),
+        ('read-sheets', "Read rules from -f BV Rewrites and print them", routine_read_sheets),
+        ('read-counts', "Read rules from mkdslrulecounts, use -a for the BV-Rewrites table, and output a column", routine_read_counts),
+        ('trace', "Execute cvc5 on a bunch of smt2 files in the -f directory and trace what rules are used. Then output to -o", routine_trace),
+        ('trace-count', "Count rule occurrences in a trace produced by trace.", routine_count),
+        ('make_regression', "Make regression test", routine_make_regression),
+    ]
+    EXEC_DICT = { name: func for name, _, func in EXECS }
+    help_str = '\n\t'.join(f"{name}: {desc}"for name,desc,_ in EXECS)
+    parser.add_argument('mode', help="Mode of execution {\n\t" + help_str + "\n}")
+    parser.add_argument('-f', '--file', help='Input file')
     parser.add_argument('-a', '--auxiliary', default="", help='Auxiliary file/directory')
     parser.add_argument('-o', '--output', default="", help='Output directory')
     parser.add_argument('--timeout', type=int, default=60000, help='Execution timeout (milliseconds)')
@@ -315,7 +340,7 @@ if __name__ == '__main__':
         print(f"Unknown mode: {args.mode}")
         sys.exit(0)
 
-    args.f = Path(args.f)
+    args.file = Path(args.file)
     args.output = Path(args.output)
 
     EXEC_DICT[args.mode](args)

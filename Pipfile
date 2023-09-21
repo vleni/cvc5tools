@@ -5,6 +5,8 @@ name = "pypi"
 
 [packages]
 pandas = "*"
+tqdm = "*"
+pyparsing = "*"
 
 [dev-packages]
 
