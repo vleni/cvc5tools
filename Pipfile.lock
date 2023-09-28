@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "d679d5673fde57454b1a4f863f42c8826cd708f0057bc883b44cd58bbd19ab28"
+            "sha256": "6b86cdffa94c26020a9ecf786fb1dc22fff18ad8294e8d71cfa558ed270d9605"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -17,6 +17,10 @@
         ]
     },
     "default": {
+        "cvc5tools": {
+            "editable": true,
+            "file": "."
+        },
         "numpy": {
             "hashes": [
                 "sha256:020cdbee66ed46b671429c7265cf00d8ac91c046901c55684954c3958525dab2",

@@ -1,91 +1,27 @@
-#!/usr/bin/env python/3
-
 from pathlib import Path
 import re
 import unittest
 from typing import Optional
 
-import pandas
+from . import tabulate
 
-# Read Rules
+# Lower the priority of threads so this does not hog the CPU
+NICE = 20
 
-def read_rules(lines):
-    # matches strings like this with negative lookahead
-    #
-    #   " rule-name-123 "
-    regex = re.compile(r"(?<= )[A-Za-z0-9\-]+(?=\b)")
-
-    DEFINE_NAMES = [
-        'define-cond-rule*',
-        'define-cond-rule',
-        'define-rule*',
-        'define-rule',
-    ]
-
-    def search_line(line):
-        if any(line.startswith(f"({name}") for name in DEFINE_NAMES):
-            search = regex.search(line)
-            if search:
-                return [search.group(0)]
-            else:
-                return []
-        else:
-            return []
-    rules = [rule for line in lines
-             for rule in search_line(line)]
-    return rules
-
-def routine_read_rules(args):
-    with open(args.file, "r") as f:
-        lines = [line.rstrip() for line in f]
-    rules = read_rules(lines)
-    rules = sorted(rules)
-    for rule in rules:
-        print(rule)
-
-
-def routine_read_sheets(args):
-    """
-    Read the BV_Rewrites spreadsheet
-    """
-    df = pandas.read_csv(args.file, keep_default_na=False)
-    rules = sorted(rule for rule in df["RARE"] if rule != "")
-    for rule in rules:
-        print(rule)
-
-
-def process_line_of_mkdslrulecounts(l) -> Optional[tuple[str, int]]:
-    if ',' not in l:
-        return None
-    l = l.rstrip().removeprefix("[92m+")
-    name, num = l.split(',')
-    return name, int(num)
-
-
-def routine_read_counts(args):
-    """
-    Read the BV_Rewrites spreadsheet
-    """
-    df_bv = pandas.read_csv(args.auxiliary, keep_default_na=False)
-    print("Columns: ", df_bv.columns)
-    with open(args.file, "r") as f:
-        counts = [x for x in [process_line_of_mkdslrulecounts(line) for line in f] if x]
-
-    counts = { name: num for name,num in counts }
-
-    df_out = df_bv["RARE"].map(lambda name: counts.get(name, "")).to_frame()
-    print(df_out.to_csv(index=False))
+# Matches "all_simplify :args (" in front and matches a space after.
+# The space is there to eliminate all "evaluate" calls!
+REGEX_ALETHE_RULE = re.compile(r"(?<=\:rule all_simplify \:args \()[A-Za-z0-9\-]+(?= )")
 
 def trace_worker(args):
     import subprocess
     import os
-    os.nice(10)
+    os.nice(NICE)
 
     command_stem, pathIn, pathOut = args
     command = command_stem + [Path(pathIn)]
     pathOut.parent.mkdir(exist_ok=True, parents=True)
     trace = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           preexec_fn=lambda: os.nice(10))
+                           preexec_fn=lambda: os.nice(NICE))
 
     if trace.returncode == 0:
         with open(str(pathOut) + '.out', "w") as f:
@@ -120,7 +56,7 @@ def routine_trace(args):
     import tqdm
     import multiprocessing
 
-    threads = multiprocessing.cpu_count() if args.threads == 0 else args.threads
+    threads = multiprocessing.cpu_count() - 2 if args.threads == 0 else args.threads
 
     print(f"Executing with {threads} threads")
     command_stem = [
@@ -153,17 +89,10 @@ def routine_trace(args):
             trace_worker(a)
             for a in tqdm.tqdm(feedstock)
         ]
-
-
-
-# Matches "all_simplify :args (" in front and matches a space after.
-# The space is there to eliminate all "evaluate" calls!
-REGEX_ALETHE_RULE = re.compile(r"(?<=\:rule all_simplify \:args \()[A-Za-z0-9\-]+(?= )")
-
 def count_worker(args):
     import subprocess
     import os
-    os.nice(10)
+    os.nice(NICE)
 
     pathIn = args
     counts = dict()
@@ -182,7 +111,7 @@ def routine_count(args):
 
     import tqdm
     import multiprocessing
-    threads = multiprocessing.cpu_count() if args.threads == 0 else args.threads
+    threads = multiprocessing.cpu_count() - 2 if args.threads == 0 else args.threads
 
     feedstock = fileList
     results = []
@@ -210,7 +139,7 @@ def routine_count(args):
 def make_regression_worker(args):
     import subprocess
     import os
-    os.nice(10)
+    os.nice(NICE)
 
     pathIn, pathAux, pathOut = args
     pathOut.parent.mkdir(exist_ok=True, parents=True)
@@ -270,21 +199,8 @@ def routine_make_regression(args):
             for a in tqdm.tqdm(feedstock)
         ]
 
-class TestRules(unittest.TestCase):
 
-    def test_read_rules(self):
-        self.assertEqual(read_rules([
-            '(define-rule bv-eq-sym-1 ((x ?BitVec) (y ?BitVec))',
-            '  (= x y) (= y x))'
-        ]), ['bv-eq-sym-1'])
-        self.assertEqual(read_rules([
-            '(define-rule* bv-or-concat-pullup',
-        ]), ['bv-or-concat-pullup'])
-        self.assertEqual(read_rules([
-            '(define-cond-rule* bv-rec-rec-rec-1 ;comment',
-            '  (= x y) (= y x))'
-        ]), ['bv-rec-rec-rec-1'])
-
+class TestTrace(unittest.TestCase):
     def assert_alethe_rule_find(self, s: str, name: Optional[str]):
         obj = REGEX_ALETHE_RULE.search(s)
         if name is None:
@@ -301,10 +217,9 @@ class TestRules(unittest.TestCase):
         self.assert_alethe_rule_find("(step t2 (cl (= (bvule x x) true)) :rule all_simplify :args (bv-ule-self x))",
                                      "bv-ule-self")
 
-
 if __name__ == '__main__':
+    import os, sys
 
-    import sys
     if len(sys.argv) == 1:
         unittest.main()
         sys.exit(0)
@@ -318,11 +233,8 @@ if __name__ == '__main__':
                     formatter_class=argparse.RawTextHelpFormatter)
 
     EXECS = [
-        ('read-rules', "Read rules from -f src/theory/bv/rewrites and print them", routine_read_rules),
-        ('read-sheets', "Read rules from -f BV Rewrites and print them", routine_read_sheets),
-        ('read-counts', "Read rules from mkdslrulecounts, use -a for the BV-Rewrites table, and output a column", routine_read_counts),
         ('trace', "Execute cvc5 on a bunch of smt2 files in the -f directory and trace what rules are used. Then output to -o", routine_trace),
-        ('trace-count', "Count rule occurrences in a trace produced by trace.", routine_count),
+        ('trace-count', "Count rule occurrences in a trace (-f) produced by trace.", routine_count),
         ('make_regression', "Make regression test", routine_make_regression),
     ]
     EXEC_DICT = { name: func for name, _, func in EXECS }
@@ -332,7 +244,7 @@ if __name__ == '__main__':
     parser.add_argument('-a', '--auxiliary', default="", help='Auxiliary file/directory')
     parser.add_argument('-o', '--output', default="", help='Output directory')
     parser.add_argument('--timeout', type=int, default=60000, help='Execution timeout (milliseconds)')
-    parser.add_argument('--cvc5', default="build/bin/cvc5", help='cvc5 path')
+    parser.add_argument('--cvc5', default=os.environ.get("CVC5", "build/bin/cvc5"), help='cvc5 path')
     parser.add_argument('--threads', type=int, default=0, help='Number of threads')
     args = parser.parse_args()
 
